@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>رسم بيانات X و Y مع مقارنة بين ملفين</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.2/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        canvas { max-width: 600px; margin-top: 20px; }
+        table { margin-top: 20px; border-collapse: collapse; width: 80%; margin-left: auto; margin-right: auto; }
+        th, td { padding: 8px; text-align: center; border: 1px solid #ddd; }
+    </style>
+</head>
+<body>
+    <h2>إدخال القيم لرسم البيانات</h2>
+    <label for="xInput">X:</label>
+    <input type="text" id="xInput" placeholder="أدخل القيم مفصولة بفاصلة">
+    <label for="yInput">Y:</label>
+    <input type="text" id="yInput" placeholder="أدخل القيم مفصولة بفاصلة">
+    <button onclick="drawChart()">رسم</button>
+    
+    <br><br>
+
+    <input type="file" id="fileInput" onchange="handleFileUpload(event)" />
+    <button onclick="drawChart()">رسم من البيانات المحملة</button>
+
+    <br><br>
+
+    <input type="file" id="fileInput2" onchange="handleFileUpload2(event)" />
+    <button onclick="drawComparisonChart()">رسم المقارنة بين الملفين</button>
+
+    <div id="file1Data"></div> <!-- عرض بيانات الملف الأول -->
+    <div id="file2Data"></div> <!-- عرض بيانات الملف الثاني -->
+
+    <div id="chartContainer">
+        <canvas id="myChart"></canvas>
+    </div>
+    
+    <script>
+        let xValues = [];
+        let yValues = [];
+        let xValues2 = [];
+        let yValues2 = [];
+
+        // دالة لتحميل البيانات من ملف Excel الأول
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    // تحسين: استخدام readAsArrayBuffer بدلاً من readAsBinaryString لتحميل الملف
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    
+                    xValues = jsonData.map(row => row[0]);
+                    yValues = jsonData.map(row => row[1]);
+                    
+                    if (xValues.length !== yValues.length) {
+                        alert("البيانات غير صحيحة! يجب أن تكون الأعمدة متساوية.");
+                        return;
+                    }
+
+                    // عرض البيانات في واجهة المستخدم
+                    displayData(jsonData, 'file1Data');
+                    
+                    drawChart(); // رسم البيانات بعد تحميلها
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        // دالة لتحميل البيانات من ملف Excel الثاني
+        function handleFileUpload2(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                    
+                    xValues2 = jsonData.map(row => row[0]);
+                    yValues2 = jsonData.map(row => row[1]);
+                    
+                    if (xValues2.length !== yValues2.length) {
+                        alert("البيانات غير صحيحة! يجب أن تكون الأعمدة متساوية.");
+                        return;
+                    }
+
+                    // عرض البيانات في واجهة المستخدم
+                    displayData(jsonData, 'file2Data');
+                    
+                    drawComparisonChart(); // رسم المقارنة بين الملفين
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        }
+
+        // دالة لعرض البيانات على الصفحة
+        function displayData(jsonData, elementId) {
+            const container = document.getElementById(elementId);
+            container.innerHTML = `<h3>البيانات في الملف:</h3>`;
+            
+            const table = document.createElement('table');
+            const headerRow = document.createElement('tr');
+            const header1 = document.createElement('th');
+            header1.textContent = 'X';
+            const header2 = document.createElement('th');
+            header2.textContent = 'Y';
+            headerRow.appendChild(header1);
+            headerRow.appendChild(header2);
+            table.appendChild(headerRow);
+
+            jsonData.forEach(row => {
+                const tr = document.createElement('tr');
+                row.forEach(cell => {
+                    const td = document.createElement('td');
+                    td.textContent = cell;
+                    tr.appendChild(td);
+                });
+                table.appendChild(tr);
+            });
+            
+            container.appendChild(table);
+        }
+
+        // دالة لتحديد النقاط المشتركة بين الملفين
+        function getCommonPoints() {
+            let commonPoints = [];
+            let threshold = 0.1; // قيمة السماح للفرق بين القيم
+            for (let i = 0; i < xValues.length; i++) {
+                for (let j = 0; j < xValues2.length; j++) {
+                    if (Math.abs(xValues[i] - xValues2[j]) < threshold && Math.abs(yValues[i] - yValues2[j]) < threshold) {
+                        commonPoints.push({ x: xValues[i], y: yValues[i] });
+                    }
+                }
+            }
+            return commonPoints;
+        }
+
+        async function trainAndPredict(xValues, yValues) {
+            const xMin = Math.min(...xValues);
+            const xMax = Math.max(...xValues);
+            const yMin = Math.min(...yValues);
+            const yMax = Math.max(...yValues);
+
+            let normalizedX = xValues.map(x => (x - xMin) / (xMax - xMin));
+            let normalizedY = yValues.map(y => (y - yMin) / (yMax - yMin));
+
+            const xs = tf.tensor2d(normalizedX, [normalizedX.length, 1]);
+            const ys = tf.tensor2d(normalizedY, [normalizedY.length, 1]);
+
+            const model = tf.sequential();
+            model.add(tf.layers.dense({ units: 128, activation: 'relu', inputShape: [1] }));
+            model.add(tf.layers.dense({ units: 64, activation: 'relu' }));
+            model.add(tf.layers.dense({ units: 1 }));
+
+            model.compile({ optimizer: 'adam', loss: 'meanSquaredError' });
+
+            const trainSize = Math.floor(0.8 * xs.shape[0]);
+            const xTrain = xs.slice([0, 0], [trainSize, 1]);
+            const yTrain = ys.slice([0, 0], [trainSize, 1]);
+            const xTest = xs.slice([trainSize, 0], [xs.shape[0] - trainSize, 1]);
+            const yTest = ys.slice([trainSize, 0], [ys.shape[0] - trainSize, 1]);
+
+            await model.fit(xTrain, yTrain, { epochs: 1000, validationData: [xTest, yTest], verbose: 0 });
+
+            let futureXValues = [];
+            let maxX = Math.max(...xValues);
+            let step = (maxX - Math.min(...xValues)) * 0.2;
+            for (let i = 1; i <= 10; i++) {
+                futureXValues.push(maxX + step * i);
+            }
+
+            const futureXs = tf.tensor2d(futureXValues.map(x => (x - xMin) / (xMax - xMin)), [futureXValues.length, 1]);
+            const futureYs = model.predict(futureXs);
+
+            let predictedYValues = (await model.predict(xs).data()).map(y => y * (yMax - yMin) + yMin);
+            let futureYValues = (await futureYs.data()).map(y => y * (yMax - yMin) + yMin);
+
+            let fittingYValues = xValues.map(x => (yMax - yMin) * (x - xMin) / (xMax - xMin) + yMin);
+
+            return { futureXValues, futureYValues, predictedYValues, fittingYValues };
+        }
+
+        async function drawChart() {
+            if (xValues.length === 0 || yValues.length === 0) {
+                xValues = document.getElementById("xInput").value.split(',').map(Number);
+                yValues = document.getElementById("yInput").value.split(',').map(Number);
+            }
+
+            if (xValues.length !== yValues.length || xValues.includes(NaN) || yValues.includes(NaN)) {
+                alert("تأكد من إدخال القيم بشكل صحيح ومتساوي!");
+                return;
+            }
+
+            let chartContainer = document.getElementById("chartContainer");
+            chartContainer.innerHTML = '<canvas id="myChart"></canvas>';
+            let ctx = document.getElementById("myChart").getContext("2d");
+
+            let { futureXValues, futureYValues, predictedYValues, fittingYValues } = await trainAndPredict(xValues, yValues);
+
+            window.myChart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: 'البيانات المدخلة',
+                            data: xValues.map((x, i) => ({ x: x, y: yValues[i] })),
+                            backgroundColor: 'blue',
+                            pointRadius: 5
+                        },
+                        {
+                            label: 'التوقعات المستقبلية',
+                            data: futureXValues.map((x, i) => ({ x: x, y: futureYValues[i] })),
+                            type: 'line',
+                            borderColor: 'green',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            fill: false
+                        },
+                        {
+                            label: 'التوقعات الدقيقة (الفيتنج)',
+                            data: xValues.map((x, i) => ({ x: x, y: fittingYValues[i] })),
+                            type: 'line',
+                            borderColor: 'purple',
+                            borderWidth: 2,
+                            fill: false
+                        },
+                        {
+                            label: 'القيم المتوقعة',
+                            data: xValues.map((x, i) => ({ x: x, y: predictedYValues[i] })),
+                            type: 'line',
+                            borderColor: 'red',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            fill: false
+                        }
+                    ]
+                },
+                options: {
+                    scales: {
+                        x: { title: { display: true, text: 'X' } },
+                        y: { title: { display: true, text: 'Y' } }
+                    }
+                }
+            });
+        }
+
+        async function drawComparisonChart() {
+            if (xValues2.length === 0 || yValues2.length === 0) {
+                alert("الرجاء تحميل الملف الثاني أولاً");
+                return;
+            }
+
+            let commonPoints = getCommonPoints();
+
+            let chartContainer = document.getElementById("chartContainer");
+            chartContainer.innerHTML = '<canvas id="myChart"></canvas>';
+            let ctx = document.getElementById("myChart").getContext("2d");
+
+            window.myChart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [
+                        {
+                            label: 'الملف الأول',
+                            data: xValues.map((x, i) => ({ x: x, y: yValues[i] })),
+                            backgroundColor: 'blue',
+                            pointRadius: 5
+                        },
+                        {
+                            label: 'الملف الثاني',
+                            data: xValues2.map((x, i) => ({ x: x, y: yValues2[i] })),
+                            backgroundColor: 'red',
+                            pointRadius: 5
+                        },
+                        {
+                            label: 'النقاط المشتركة',
+                            data: commonPoints,
+                            backgroundColor: 'green',
+                            pointRadius: 7
+                        }
+                    ]
+                },
+                options: {
+                    scales: {
+                        x: { title: { display: true, text: 'X' } },
+                        y: { title: { display: true, text: 'Y' } }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
